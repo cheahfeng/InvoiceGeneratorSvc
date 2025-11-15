@@ -1,4 +1,3 @@
-package service;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfWriter;
@@ -17,13 +16,12 @@ import java.math.BigDecimal;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
-public class InvoiceGeneratorSvc {
-    private static final Logger logger = LogManager.getLogger(InvoiceGeneratorSvc.class);
+public class InvoiceSplitter {
+    private static final Logger logger = LogManager.getLogger(InvoiceSplitter.class);
 
     public static void main(String[] args) throws IOException {
-        InvoiceGeneratorSvc app = new InvoiceGeneratorSvc();
+        InvoiceSplitter app = new InvoiceSplitter();
         app.run();
     }
 
@@ -39,7 +37,7 @@ public class InvoiceGeneratorSvc {
     // path to your Excel template
     private final String templatePath = "template/Template.xlsx";
 
-    public InvoiceGeneratorSvc() {
+    public InvoiceSplitter() {
         serviceTypeOrder.put("TAX", 1);
         serviceTypeOrder.put("ACCOUNT", 2);
         serviceTypeOrder.put("BPO", 3);
@@ -496,12 +494,12 @@ public class InvoiceGeneratorSvc {
     // 1. Find "Invoice"
     // 2. Next line, parse "To : " -> company (until multi spaces)
     // 3. Search "Total payable inclusive of service tax :" and get amount after it
-    public class InvoiceExtractor implements InvoiceGeneratorSvc.PageExtractor {
+    public class InvoiceExtractor implements InvoiceSplitter.PageExtractor {
 
         @Override
-        public InvoiceGeneratorSvc.CompanyAndType extract(String pageText) {
+        public InvoiceSplitter.CompanyAndType extract(String pageText) {
             if (pageText == null) {
-                return new InvoiceGeneratorSvc.CompanyAndType(null, null, null);
+                return new InvoiceSplitter.CompanyAndType(null, null, null);
             }
 
             String[] lines = pageText.split("\\r?\\n");
@@ -549,7 +547,7 @@ public class InvoiceGeneratorSvc {
                     "Total payable inclusive of service tax :"
             );
 
-            return new InvoiceGeneratorSvc.CompanyAndType(company, null, totalAmount);
+            return new InvoiceSplitter.CompanyAndType(company, null, totalAmount);
         }
     }
 
