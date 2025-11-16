@@ -3,8 +3,6 @@ import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfWriter;
 import com.itextpdf.kernel.pdf.canvas.parser.PdfTextExtractor;
 import com.itextpdf.kernel.pdf.canvas.parser.listener.LocationTextExtractionStrategy;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 
@@ -16,9 +14,9 @@ import java.math.BigDecimal;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 public class InvoiceSplitter {
-    private static final Logger logger = LogManager.getLogger(InvoiceSplitter.class);
 
     public static void main(String[] args) throws IOException {
         InvoiceSplitter app = new InvoiceSplitter();
@@ -46,10 +44,9 @@ public class InvoiceSplitter {
     }
 
     public void run() throws IOException {
-        System.out.println("Generation Started...");
-
         List<SourceConfig> sources = new ArrayList<>();
 
+        // 1st PDF – only company + CHSS total (Total payable inclusive of service tax :)
         sources.add(new SourceConfig(
                 "input/INVOICE - CHSS.pdf",
                 new InvoiceExtractor(),
@@ -58,6 +55,7 @@ public class InvoiceSplitter {
                 false   // sortByService
         ));
 
+        // 2nd PDF – company + service type + Total amount
         sources.add(new SourceConfig(
                 "input/SOA - SHAREBIZ.pdf",
                 new StatementOfAccountExtractor(),
@@ -66,6 +64,7 @@ public class InvoiceSplitter {
                 false   // sortByService
         ));
 
+        // 3rd PDF – Customer rule, company only
         sources.add(new SourceConfig(
                 "input/INVOICE - SHAREBIZ.pdf",
                 new InvoiceByTypeExtractor(),
@@ -285,8 +284,9 @@ public class InvoiceSplitter {
      * Generate Excel for one company from Template.xlsx:
      * - A2: company name
      * - For col D codes TAX/ACC/BPO/SEC/OTHERS: put amount in col B
-     * - For D = CHSS Invoice: put CHSS amount in B
+     * - For D = CHSS INVOICE: put CHSS amount in B
      * - For row where A = Total: put grand total in B
+     * - Then remove any service/CHSS row where amount is null/0
      */
     private void generateExcelForCompany(String outputDir,
                                          String fileName,
@@ -411,12 +411,73 @@ public class InvoiceSplitter {
                 }
             }
 
+            // === Remove rows where item not found or amount is 0 ===
+            // Codes to clean: TAX / ACC / BPO / SEC / OTHERS / CHSS INVOICE
+            Set<String> removableCodes = new HashSet<>(
+                    Arrays.asList("TAX", "ACC", "BPO", "SEC", "OTHERS", "CHSS INVOICE")
+            );
+
+            List<Integer> rowsToDelete = new ArrayList<>();
+
+            for (Map.Entry<String, Integer> entryCode : codeRowIndex.entrySet()) {
+                String code = entryCode.getKey();
+                if (!removableCodes.contains(code)) {
+                    continue;
+                }
+                Integer rowIdx = entryCode.getValue();
+                if (rowIdx == null) continue;
+
+                Row row = sheet.getRow(rowIdx);
+                if (row == null) continue;
+
+                Cell amountCell = row.getCell(1); // column B
+                double value = 0.0;
+                boolean hasValue = false;
+
+                if (amountCell != null) {
+                    if (amountCell.getCellType() == CellType.NUMERIC) {
+                        value = amountCell.getNumericCellValue();
+                        hasValue = true;
+                    } else if (amountCell.getCellType() == CellType.STRING) {
+                        String s = amountCell.getStringCellValue();
+                        if (s != null && !s.trim().isEmpty()) {
+                            try {
+                                value = Double.parseDouble(s.trim());
+                                hasValue = true;
+                            } catch (NumberFormatException ignore) {
+                            }
+                        }
+                    }
+                }
+
+                if (!hasValue || Math.abs(value) < 0.0000001) {
+                    rowsToDelete.add(rowIdx);
+                }
+            }
+
+            // Delete rows from bottom to top to avoid shifting issues
+            Collections.sort(rowsToDelete, Collections.reverseOrder());
+            for (Integer rowIdx : rowsToDelete) {
+                if (rowIdx == null) continue;
+                int ri = rowIdx;
+                int lastRow = sheet.getLastRowNum();
+                if (ri < 0 || ri > lastRow) continue;
+
+                Row row = sheet.getRow(ri);
+                if (row != null) {
+                    sheet.removeRow(row);
+                }
+                if (ri != lastRow) {
+                    sheet.shiftRows(ri + 1, lastRow, -1);
+                }
+            }
+
             String xlsxPath = outputDir + fileName + ".xlsx";
             try (FileOutputStream fos = new FileOutputStream(xlsxPath)) {
                 wb.write(fos);
             }
 
-            System.out.println("Excel Created for " + fileName);
+            System.out.println("Excel created: " + xlsxPath);
         }
     }
 
@@ -497,9 +558,9 @@ public class InvoiceSplitter {
     public class InvoiceExtractor implements InvoiceSplitter.PageExtractor {
 
         @Override
-        public InvoiceSplitter.CompanyAndType extract(String pageText) {
+        public CompanyAndType extract(String pageText) {
             if (pageText == null) {
-                return new InvoiceSplitter.CompanyAndType(null, null, null);
+                return new CompanyAndType(null, null, null);
             }
 
             String[] lines = pageText.split("\\r?\\n");
@@ -547,7 +608,7 @@ public class InvoiceSplitter {
                     "Total payable inclusive of service tax :"
             );
 
-            return new InvoiceSplitter.CompanyAndType(company, null, totalAmount);
+            return new CompanyAndType(company, null, totalAmount);
         }
     }
 
@@ -662,5 +723,3 @@ public class InvoiceSplitter {
         }
     }
 }
-
-
